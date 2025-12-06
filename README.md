@@ -9,15 +9,16 @@ This workspace provides a complete pipeline for:
 2. **Downsampling** dense 3D pointclouds to reduce computational load
 3. **Converting** 3D pointclouds to 2D laser scans
 4. **Pipeline integration** combining downsampling and conversion in one launch
+5. **SLAM Toolbox** Running SLAM Toolbox on the 2D scan for mapping and localization
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────────┐     ┌─────────────────────┐     ┌───────────┐
-│  LiDAR Sensor   │────▶│ Pointcloud           │────▶│ Pointcloud to       │────▶│ 2D Laser  │
-│  /ouster/points │     │ Downsampling         │     │ Laserscan           │     │ /scan     │
-│                 │     │ /downsampled_points  │     │                     │     │           │
-└─────────────────┘     └──────────────────────┘     └─────────────────────┘     └───────────┘
+┌─────────────────┐     ┌──────────────────────┐     ┌─────────────────────┐     ┌───────────┐     ┌───────────────┐
+│  LiDAR Sensor   │────▶│ Pointcloud           │────▶│ Pointcloud to       │────▶│ 2D Laser  │────▶│ SLAM Toolbox  │
+│  /ouster/points │     │ Downsampling         │     │ Laserscan           │     │ /scan     │     │ /map          │
+│                 │     │ /downsampled_points  │     │                     │     │           │     │               │
+└─────────────────┘     └──────────────────────┘     └─────────────────────┘     └───────────┘     └───────────────┘
 ```
 
 ## Packages
@@ -144,17 +145,19 @@ ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node \
 
 ### 4. pcl_to_scan_pipeline
 
-Complete pipeline that combines pointcloud downsampling and laser scan conversion in a single launch file.
+Complete pipeline that combines pointcloud downsampling, laser scan conversion, and SLAM in a single launch file.
 
 #### Features
 - Single launch for the complete processing chain
 - Configurable parameters for both stages
 - Optional static TF publisher for testing
+- SLAM Toolbox integration for mapping
 - Ready for integration with Nav2
 
-#### Launch
+#### Launch Files
+
+##### Basic Pipeline (Downsampling + Laserscan)
 ```bash
-# Basic pipeline launch
 ros2 launch pcl_to_scan_pipeline pcl_to_scan_pipeline.launch.py
 
 # With custom parameters
@@ -164,14 +167,15 @@ ros2 launch pcl_to_scan_pipeline pcl_to_scan_pipeline.launch.py \
     voxel_size:=0.05 \
     min_height:=-0.2 \
     max_height:=0.3
-
-# With static TF (for standalone testing)
-ros2 launch pcl_to_scan_pipeline pcl_to_scan_with_tf.launch.py \
-    sensor_frame:=os_sensor \
-    target_frame:=base_link
 ```
 
-#### Parameters
+##### SLAM Toolbox Pipeline
+```bash
+# Launch with SLAM Toolbox for mapping
+ros2 launch pcl_to_scan_pipeline slam_toolbox.launch.py
+```
+
+#### Parameters (pcl_to_scan_pipeline)
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `input_topic` | `/ouster/points` | Input dense pointcloud topic |
@@ -185,6 +189,76 @@ ros2 launch pcl_to_scan_pipeline pcl_to_scan_with_tf.launch.py \
 | `range_min` | `0.1` | Minimum scan range |
 | `range_max` | `100.0` | Maximum scan range |
 
+#### SLAM Toolbox Configuration
+
+The SLAM Toolbox parameters are configured in `config/mapper_params_online_async.yaml`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `odom_frame` | `os_sensor` | Odometry frame (use sensor frame if no odom) |
+| `map_frame` | `map` | Map frame |
+| `base_frame` | `os_sensor` | Robot base frame |
+| `scan_topic` | `/scan` | Input laser scan topic |
+| `mode` | `mapping` | SLAM mode: `mapping` or `localization` |
+| `resolution` | `0.05` | Map resolution in meters |
+| `max_laser_range` | `20.0` | Maximum laser range |
+| `minimum_travel_distance` | `0.0` | Min distance before adding new scan |
+| `minimum_travel_heading` | `0.0` | Min rotation before adding new scan |
+
+---
+
+## SLAM Toolbox Usage
+
+### Running SLAM with a ROS Bag
+
+```bash
+# Terminal 1: Play the rosbag with clock
+ros2 bag play /path/to/your/bag --clock --rate 0.3 --topics /ouster/points
+
+# Terminal 2: Launch the SLAM pipeline
+ros2 launch pcl_to_scan_pipeline slam_toolbox.launch.py
+
+# Terminal 3: Visualize in RViz2
+rviz2
+# Add displays for:
+# - Map (/map)
+# - LaserScan (/scan)
+# - TF
+```
+
+### Saving Maps
+
+#### Save Occupancy Grid Map (Standard Format)
+```bash
+# Create maps directory
+mkdir -p /ros_ws/maps
+
+# Save map using nav2_map_server
+ros2 run nav2_map_server map_saver_cli -f /ros_ws/maps/my_map
+
+# This creates:
+# /ros_ws/maps/my_map.pgm  - The map image
+# /ros_ws/maps/my_map.yaml - The map metadata
+```
+
+#### Save Serialized Map (For Resuming SLAM)
+```bash
+# Save pose graph that can be loaded later
+ros2 service call /slam_toolbox/serialize_map slam_toolbox/srv/SerializePoseGraph "{filename: '/ros_ws/maps/my_map'}"
+
+# This creates:
+# /ros_ws/maps/my_map.posegraph - Serialized pose graph
+# /ros_ws/maps/my_map.data      - Serialized map data
+```
+
+### Output Files
+| File | Description |
+|------|-------------|
+| `my_map.pgm` | Occupancy grid image |
+| `my_map.yaml` | Map metadata (resolution, origin) |
+| `my_map.posegraph` | Serialized pose graph (slam_toolbox) |
+| `my_map.data` | Serialized map data (slam_toolbox) |
+
 ---
 
 ## Installation
@@ -193,6 +267,19 @@ ros2 launch pcl_to_scan_pipeline pcl_to_scan_with_tf.launch.py \
 - ROS2 Humble
 - PCL (Point Cloud Library)
 - TF2
+- SLAM Toolbox
+- Nav2 Map Server (for saving maps)
+
+### Install Dependencies
+```bash
+sudo apt update
+sudo apt install -y \
+    ros-humble-slam-toolbox \
+    ros-humble-nav2-map-server \
+    ros-humble-pointcloud-to-laserscan \
+    ros-humble-tf2-ros \
+    ros-humble-tf2-sensor-msgs
+```
 
 ### Build
 ```bash
@@ -208,7 +295,7 @@ source install/setup.bash
 
 ### Build Single Package
 ```bash
-colcon build --packages-select pointcloud_downsampling
+colcon build --packages-select pcl_to_scan_pipeline
 source install/setup.bash
 ```
 
@@ -258,6 +345,18 @@ ros2 launch pcl_to_scan_pipeline pcl_to_scan_pipeline.launch.py \
     range_max:=25.0
 ```
 
+### Example 5: Complete SLAM Pipeline with Rosbag
+```bash
+# Terminal 1: Play rosbag
+ros2 bag play /path/to/bag --clock --rate 0.3 --topics /ouster/points
+
+# Terminal 2: Launch SLAM
+ros2 launch pcl_to_scan_pipeline slam_toolbox.launch.py
+
+# Terminal 3: Save map when done
+ros2 run nav2_map_server map_saver_cli -f /ros_ws/maps/my_map
+```
+
 ---
 
 ## Topics
@@ -268,12 +367,15 @@ ros2 launch pcl_to_scan_pipeline pcl_to_scan_pipeline.launch.py \
 | `/downsampled_points` | `sensor_msgs/PointCloud2` | pointcloud_downsampling | Downsampled pointcloud |
 | `/scan` | `sensor_msgs/LaserScan` | pointcloud_to_laserscan | 2D laser scan |
 | `/simulated_pointcloud` | `sensor_msgs/PointCloud2` | lidar_simulator | Simulated pointcloud |
+| `/map` | `nav_msgs/OccupancyGrid` | slam_toolbox | Occupancy grid map |
+| `/map_metadata` | `nav_msgs/MapMetaData` | slam_toolbox | Map metadata |
 
 ### Subscribed Topics
 | Topic | Type | Package | Description |
 |-------|------|---------|-------------|
 | `/ouster/points` | `sensor_msgs/PointCloud2` | pointcloud_downsampling | Input dense pointcloud |
 | `/downsampled_points` | `sensor_msgs/PointCloud2` | pointcloud_to_laserscan | Input for conversion |
+| `/scan` | `sensor_msgs/LaserScan` | slam_toolbox | Input for SLAM |
 
 ---
 
@@ -301,6 +403,23 @@ ament_target_dependencies(your_target
   sensor_msgs
 )
 ```
+
+### SLAM Toolbox: "Message Filter dropping message"
+This usually means TF is not properly configured:
+1. Ensure `--clock` flag is used when playing rosbag
+2. Verify all nodes have `use_sim_time: true`
+3. Check TF chain exists: `ros2 run tf2_ros tf2_echo map os_sensor`
+
+### SLAM Toolbox: "TF_OLD_DATA"
+Time synchronization issue between bag and nodes:
+1. Start rosbag FIRST before launching nodes
+2. Use slower playback rate: `--rate 0.3`
+3. Ensure static TF publishers have `use_sim_time: true`
+
+### SLAM Map Not Updating
+1. Check `minimum_travel_distance` and `minimum_travel_heading` in YAML
+2. Set both to `0.0` to update on every scan
+3. Verify `/scan` topic is publishing: `ros2 topic hz /scan`
 
 ---
 
