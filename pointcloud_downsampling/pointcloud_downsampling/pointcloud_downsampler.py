@@ -20,6 +20,7 @@ class PointCloudDownsampler(Node):
         self.declare_parameter('uniform_skip', 10)
         self.declare_parameter('random_ratio', 0.1)
         self.declare_parameter('max_points', 50000)
+        self.declare_parameter('use_reliable_qos', True)  # For RViz compatibility
         
         # Get parameters
         self.input_topic = self.get_parameter('input_topic').get_parameter_value().string_value
@@ -29,10 +30,19 @@ class PointCloudDownsampler(Node):
         self.uniform_skip = self.get_parameter('uniform_skip').get_parameter_value().integer_value
         self.random_ratio = self.get_parameter('random_ratio').get_parameter_value().double_value
         self.max_points = self.get_parameter('max_points').get_parameter_value().integer_value
+        use_reliable = self.get_parameter('use_reliable_qos').get_parameter_value().bool_value
         
-        # QoS profile for point cloud data
-        qos_profile = QoSProfile(
+        # QoS profile for subscribing (BEST_EFFORT to match most LiDAR drivers)
+        sub_qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+        
+        # QoS profile for publishing (RELIABLE for RViz compatibility)
+        pub_qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE if use_reliable else ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
             history=HistoryPolicy.KEEP_LAST,
             depth=1
@@ -43,20 +53,21 @@ class PointCloudDownsampler(Node):
             PointCloud2,
             self.input_topic,
             self.pointcloud_callback,
-            qos_profile
+            sub_qos_profile
         )
         
         self.publisher = self.create_publisher(
             PointCloud2,
             self.output_topic,
-            qos_profile
+            pub_qos_profile
         )
         
         self.get_logger().info(f'PointCloud Downsampler started')
         self.get_logger().info(f'Input topic: {self.input_topic}')
         self.get_logger().info(f'Output topic: {self.output_topic}')
         self.get_logger().info(f'Method: {self.downsample_method}')
-        
+        self.get_logger().info(f'Publisher QoS: {"RELIABLE" if use_reliable else "BEST_EFFORT"}')
+
     def pointcloud_callback(self, msg):
         try:
             # Convert PointCloud2 to numpy array

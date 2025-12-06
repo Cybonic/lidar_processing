@@ -24,9 +24,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'lidar_simulator = lidar_simulator.lidar_simulator:main',
+            'lidar_simulator    = lidar_simulator.lidar_simulator:main',
             'velodyne_simulator = lidar_simulator.velodyne_simulator:main',
-            'ouster_simulator = lidar_simulator.ouster_simulator:main',
+            'ouster_simulator   = lidar_simulator.ouster_simulator:main',
         ],
     },
 )

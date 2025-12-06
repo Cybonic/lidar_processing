@@ -8,7 +8,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'input_topic',
-            default_value='/velodyne_points',
+            default_value='/ouster/points',
             description='Input point cloud topic'
         ),
         
